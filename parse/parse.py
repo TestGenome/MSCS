@@ -115,8 +115,7 @@ class ReplayProcessor(multiprocessing.Process):
             replay_data=replay_data,
             map_data=map_data,
             options=interface,
-            observed_player_id=player_id,
-            disable_fog=True))
+            observed_player_id=player_id))
         
         n_states = 0
 
@@ -124,11 +123,11 @@ class ReplayProcessor(multiprocessing.Process):
 
         while True:
             controller.step(FLAGS.step_size)
-            obs = controller.observe(disable_fog=True)
+            obs = controller.observe()
 
             actions[n_states] = extract_actions(obs)
             spatial_states_np.append(spatial_parser.extract(obs.observation))
-            global_states_np.append(global_parser.extract(obs.observation, FLAGS.step_size * n_states))
+            global_states_np.append(global_parser.extract(obs.observation))
 
             n_states += 1
 
@@ -138,7 +137,7 @@ class ReplayProcessor(multiprocessing.Process):
         spatial_states_np = np.asarray(spatial_states_np)
         global_states_np = np.asarray(global_states_np)
 
-        spatial_states_np = spatial_states_np.reshape([n_states, -1])
+        spatial_states_np = spatial_states_np.reshape((n_states, -1))
 
         sparse.save_npz(os.path.join(FLAGS.output_path, 'global',
                                     f'{player_id}@{replay_id}.glo'), sparse.csc_matrix(global_states_np)) # Global tensor

@@ -22,9 +22,9 @@ class GlobalParser:
         self.enemy_unit_map = self.map_unit_ids(enemy_race)
         self.upgrade_map = self.map_upgrade_ids()
 
-        self.player_upgrades = [0,0,0]
-        self.enemy_upgrades = [0,0,0]
-        # self.enemy_tags = [set() for _ in self.enemy_unit_map]
+        # self.player_upgrades = [0,0,0]
+        # self.enemy_upgrades = [0,0,0]
+        self.enemy_tags = [set() for _ in self.enemy_unit_map]
 
     def map_unit_ids(self, race):
         id_map = {}
@@ -63,10 +63,10 @@ class GlobalParser:
 
         return id_map
 
-    def extract(self, obs, frame):
+    def extract(self, obs):
 
         state = np.array([
-            frame,
+            obs.game_loop,
             obs.score.score,
             obs.score.score_details.idle_production_time,
             obs.score.score_details.idle_worker_time,
@@ -80,8 +80,6 @@ class GlobalParser:
             obs.score.score_details.collection_rate_vespene,
             obs.score.score_details.spent_minerals,
             obs.score.score_details.spent_vespene,
-            # obs.score.score_details.current_apm,
-            # obs.score.score_details.current_effective_apm,
             obs.player_common.minerals,
             obs.player_common.vespene,
             obs.player_common.food_cap,
@@ -89,7 +87,8 @@ class GlobalParser:
             obs.player_common.food_army,
             obs.player_common.food_workers,
             obs.player_common.idle_worker_count,
-            obs.player_common.army_count
+            obs.player_common.army_count,
+            obs.player_common.warp_gate_count
         ])
 
         upgrades = self.get_upgrades(obs)
@@ -97,6 +96,7 @@ class GlobalParser:
         allied_construction, allied_percent = self.get_allied_construction(obs)
         enemy_visible, enemy_hp = self.get_enemy_visible(obs)
         enemy_construction, enemy_percent = self.get_enemy_construction(obs)
+        enemy_killed = self.get_enemy_killed(obs)
         # enemy_seen = self.get_enemy_seen(obs)
 
         return np.concatenate((
@@ -104,7 +104,8 @@ class GlobalParser:
             allied_alive, allied_hp, 
             allied_construction, allied_percent, 
             enemy_visible, enemy_hp, 
-            enemy_construction, enemy_percent))
+            enemy_construction, enemy_percent,
+            enemy_killed))
 
     def get_feature_list(self):
         feature_list = [
@@ -122,8 +123,6 @@ class GlobalParser:
             'collection_rate_vespene',
             'spent_minerals',
             'spent_vespene',
-            # 'current_apm',
-            # 'current_effective_apm',
             'minerals',
             'vespene',
             'food_cap',
@@ -131,7 +130,8 @@ class GlobalParser:
             'food_army',
             'food_workers',
             'idle_worker_count',
-            'army_count'
+            'army_count',
+            'warp_gate_count'
         ]
 
         for research in sorted(self.upgrade_map, key = self.upgrade_map.get):
@@ -141,6 +141,9 @@ class GlobalParser:
             for feature in ['unit', 'hp', 'construction', 'percent']:
                 for unit in sorted(unit_map, key = unit_map.get):
                     feature_list.append(f"{player}_{feature}_{unit.name}")
+
+        for unit in sorted(self.enemy_unit_map, key = self.enemy_unit_map.get):
+            feature_list.append(f"enemy_killed_{unit.name}")
 
         return feature_list
 
@@ -172,10 +175,9 @@ class GlobalParser:
                 if idx is not None:
                     count[idx] += 1
                     hp[idx] += (unit.health + unit.shield) / (unit.health_max + unit.shield_max)
-
-                    self.player_upgrades[0] = max(self.player_upgrades[0], unit.attack_upgrade_level)
-                    self.player_upgrades[1] = max(self.player_upgrades[1], unit.armor_upgrade_level)
-                    self.player_upgrades[2] = max(self.player_upgrades[2], unit.shield_upgrade_level)
+                    # self.player_upgrades[0] = max(self.player_upgrades[0], unit.attack_upgrade_level)
+                    # self.player_upgrades[1] = max(self.player_upgrades[1], unit.armor_upgrade_level)
+                    # self.player_upgrades[2] = max(self.player_upgrades[2], unit.shield_upgrade_level)
 
                     for passenger in unit.passengers:
                         idx = self.get_unit_idx(self.player_unit_map, passenger.unit_type)
@@ -211,15 +213,16 @@ class GlobalParser:
         hp = np.zeros(len(self.enemy_unit_map))
 
         for unit in obs.raw_data.units:
-            if unit.alliance == 4 and unit.display_type == 1:
+            if unit.alliance == 4 and unit.display_type == 1 and unit.build_progress >= 1:
                 idx = self.get_unit_idx(self.enemy_unit_map, unit.unit_type)
                 if idx is not None:
                     count[idx] += 1
                     hp[idx] += (unit.health + unit.shield) / (unit.health_max + unit.shield_max)
+                    self.enemy_tags[idx].add(unit.tag)
 
-                    self.enemy_upgrades[0] = max(self.enemy_upgrades[0], unit.attack_upgrade_level)
-                    self.enemy_upgrades[1] = max(self.enemy_upgrades[1], unit.armor_upgrade_level)
-                    self.enemy_upgrades[2] = max(self.enemy_upgrades[2], unit.shield_upgrade_level)
+                    # self.enemy_upgrades[0] = max(self.enemy_upgrades[0], unit.attack_upgrade_level)
+                    # self.enemy_upgrades[1] = max(self.enemy_upgrades[1], unit.armor_upgrade_level)
+                    # self.enemy_upgrades[2] = max(self.enemy_upgrades[2], unit.shield_upgrade_level)
 
         for idx, num in np.ndenumerate(count):
             if num > 0:
@@ -232,17 +235,40 @@ class GlobalParser:
         percentage = np.zeros(len(self.enemy_unit_map))
 
         for unit in obs.raw_data.units:
-            if unit.alliance == 4 and unit.build_progress < 1:
+            if unit.alliance == 4 and unit.display_type == 1 and unit.build_progress < 1:
                 idx = self.get_unit_idx(self.enemy_unit_map, unit.unit_type)
                 if idx is not None:
                     count[idx] += 1
                     percentage[idx] += unit.build_progress
+                    self.enemy_tags[idx].add(unit.tag)
 
         for idx, num in np.ndenumerate(count):
             if num > 0:
                 percentage[idx] /= num
 
         return (count, percentage)
+
+    def get_enemy_killed(self, obs):
+
+        dead_tags = set(obs.raw_data.event.dead_units)
+
+        count = np.zeros(len(self.enemy_unit_map))
+
+        for idx, tags in enumerate(self.enemy_tags):
+            remaining_tags = tags - dead_tags
+            count[idx] = len(tags) - len(remaining_tags)
+
+            # if count[idx] > 0:
+
+            #     for a, b in self.enemy_unit_map.items():
+            #         if b == idx:
+            #             name = a.name
+
+            #     print(f"{name} killed-{count[idx]} remaining-{len(remaining_tags)}")
+
+            self.enemy_tags[idx] = remaining_tags
+
+        return count
 
     # Doesn't work currently, need to figure out how to turn off fog of war to work this
     # def get_enemy_seen(self, obs): 
